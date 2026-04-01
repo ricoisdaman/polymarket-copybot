@@ -1,116 +1,229 @@
-# Copybot v1
+# Copybot v1 Beginner Setup Guide
 
-Paper-first Polymarket copy-trading bot monorepo.
+This guide is written for people with little or no coding experience.
 
-This guide is written for non-technical users. Follow it in order and do not skip steps.
+Read every step in order.
+Do not skip steps.
 
-## 1) What this project includes
+## 1. Important safety rules
 
-- apps/bot-worker: main copy-trading worker
-- apps/guardian-worker: safety checks and auto-pause logic
-- apps/api-server: backend for dashboard APIs
-- apps/dashboard: web dashboard (Next.js)
-- packages/db: Prisma + SQLite storage
-- configs/default.config.json: default config template
+1. Start in PAPER mode only.
+2. Do not use LIVE mode until PAPER mode works for multiple days.
+3. Never share private keys, API secrets, or passphrases.
+4. Never upload env files anywhere.
+5. If unsure, stop and ask for help before continuing.
 
-## 2) Safety first (read this)
+## 2. What this project is
 
-- Start in PAPER mode only.
-- Never commit .env files.
-- Never commit database files (.db) or logs.
-- Never share wallet private keys or API secrets in chat/screenshots.
+1. Bot worker: reads leader activity and places copy trades.
+2. Guardian worker: safety checks, pause protection, alerts.
+3. API server: data backend for dashboard.
+4. Dashboard: visual UI to monitor bot status.
+5. Database package: stores runtime state in local SQLite.
 
-This repository is configured to ignore sensitive/local files by default.
+## 3. Software you must install
 
-## 3) First-time setup (Windows)
+This project now supports both Windows and macOS from the same codebase.
 
-1. Install Node.js LTS (v20+ recommended):
+Install these in this exact order:
+
+1. Google Chrome
+	- https://www.google.com/chrome/
+2. Git for Windows
+	- https://git-scm.com/download/win
+	- During setup, keep default options.
+3. Node.js LTS (version 20 or newer)
 	- https://nodejs.org/
-2. Install pnpm globally:
-	- `npm install -g pnpm`
-3. Open this folder in VS Code.
-4. In terminal at repo root, run:
-	- `pnpm install`
-	- `pnpm db:generate`
-	- `pnpm db:push`
+	- Download the LTS installer, not Current.
+4. Visual Studio Code
+	- https://code.visualstudio.com/
 
-If all commands finish without errors, your machine is ready.
+After installing Node.js, open terminal and run:
 
-## 4) Configure your env files
+npm install -g pnpm
 
-1. Duplicate an example file (for each profile you want):
-	- `.env.example` -> `.env`
-	- `.env.leader2.example` -> `.env.leader2` (if used)
-2. Edit values carefully:
-	- `PROFILE_ID`
-	- `BOT_MODE` (keep `PAPER` for testing)
-	- `LEADER_WALLET`
-	- `STARTING_USDC`
-3. For LIVE mode (later), you must set wallet/API credentials in your local .env only.
+Then run:
 
-## 5) Run the bot
+node -v
+pnpm -v
+git --version
 
-Option A: run whole stack
-- `pnpm dev`
+If all three commands print versions, continue.
 
-Option B: run with launcher scripts
-- API only: `start-api.bat`
-- Main bot profile: `start-bot.bat`
-- Extra profile workers: `start-leader2.bat`, `start-leader3.bat`, `start-leader4.bat`
+## 4. Download this project
 
-Dashboard URL:
-- http://localhost:3000
+If you are cloning from GitHub:
 
-API URL:
-- http://localhost:4000
+1. Open terminal.
+2. Go to your chosen folder, example:
 
-## 6) Health checks
+Windows example:
 
-- Build/type check:
-  - `pnpm typecheck`
-  - `pnpm build`
-- DB schema sync:
-  - `pnpm db:push`
-- Overnight soak test:
-  - `pnpm soak:overnight`
+cd C:\Users\YourName\Documents
 
-## 7) Git setup for v1 release
+macOS example:
 
-This project already has git initialized. To publish a clean v1:
+cd ~/Documents
 
-1. Review changes:
-	- `git status`
-2. Stage all safe files:
-	- `git add .`
-3. Commit:
-	- `git commit -m "v1: initial public-safe copybot release"`
-4. Create a new empty GitHub repo, then connect remote:
-	- `git remote add origin <your-repo-url>`
-5. Push:
-	- `git branch -M main`
-	- `git push -u origin main`
+3. Clone repo:
 
-## 8) Before sharing with friends/family (checklist)
+git clone https://github.com/ricoisdaman/polymarket-copybot.git
 
-- Confirm no .env files are tracked:
-  - `git ls-files ".env*"`
-- Confirm no DB files are tracked:
-  - `git ls-files | findstr /i ".db"`
-- Confirm no logs are tracked:
-  - `git ls-files | findstr /i "logs/"`
-- Confirm no local build artifacts are tracked:
-  - `git ls-files | findstr /i ".next-dev .turbo"`
-- Run app once after cloning on a clean machine.
+4. Enter folder:
 
-If any command shows sensitive files, stop and remove them from git before sharing.
+cd polymarket-copybot
 
-## 9) Common mistakes to avoid
+5. Open in VS Code:
 
-- Running LIVE mode too early.
-- Sharing screenshots that include wallet/API keys.
-- Copying your local .env into chat or commits.
-- Committing local DB/log files and then sharing the repo.
+code .
 
-## 10) Support note
+## 5. First project setup
 
-If the dashboard numbers look wrong after a reset, restart the profile worker so in-memory state re-hydrates from DB.
+In VS Code terminal, run these one by one (same commands on Windows and Mac):
+
+pnpm install
+pnpm db:generate
+pnpm db:push
+
+Wait for each command to finish before running the next one.
+
+## 6. Configure paper mode (safe mode)
+
+You must create your own local env file.
+
+1. In project root, copy .env.example to .env
+2. Open .env
+3. Make sure these values exist:
+
+BOT_MODE=PAPER
+ENABLE_LIVE_EXECUTION=false
+
+4. Set leader wallet you want to follow:
+
+LEADER_WALLET=0x...
+
+5. Set paper starting balance:
+
+STARTING_USDC=25
+
+6. Save file.
+
+## 7. Start the bot in paper mode
+
+Option A (simplest):
+
+pnpm dev
+
+Option B (separate windows):
+
+Windows:
+
+start-api.bat
+start-bot.bat
+
+macOS:
+
+pnpm --filter @copybot/api-server dev
+pnpm --filter @copybot/bot-worker dev
+pnpm --filter @copybot/guardian-worker dev
+pnpm --filter @copybot/dashboard dev
+
+Dashboard should open at:
+
+http://localhost:3000
+
+API health check:
+
+http://localhost:4000/health
+
+## 8. Optional profiles (leader2, leader3, leader4)
+
+If using additional profiles:
+
+1. Copy each example env file to matching real file.
+2. Set each PROFILE_ID and LEADER_WALLET.
+3. Keep each in PAPER mode first.
+4. Start with their launcher batch files:
+	- start-leader2.bat
+	- start-leader3.bat
+	- start-leader4.bat
+
+On macOS, start each profile worker directly with pnpm filter commands and the matching env file strategy.
+
+## 9. Hooking up to a real Polymarket account (LIVE mode, advanced)
+
+Do this only after paper mode is stable.
+
+You need all of these from your own account:
+
+1. POLYMARKET_WALLET_ADDRESS
+2. POLYMARKET_PRIVATE_KEY
+3. POLYMARKET_API_KEY
+4. POLYMARKET_API_SECRET
+5. POLYMARKET_API_PASSPHRASE
+
+Then in your local .env:
+
+BOT_MODE=LIVE
+ENABLE_LIVE_EXECUTION=true
+
+Keep trade sizes very small at first.
+
+If any credential is missing, the bot should refuse live execution.
+
+## 10. Common problems and quick fixes
+
+1. Dashboard shows wrong cash after reset:
+	- Restart the profile worker.
+2. Command not found for pnpm:
+	- Run npm install -g pnpm again, then reopen terminal.
+3. Port already in use:
+	- Close old terminals and restart.
+	- On macOS, you can also stop a port with: lsof -i :3000 or lsof -i :4000
+4. Bot paused itself:
+	- Check alerts in dashboard and fix cause before resuming.
+
+## 11. macOS notes
+
+1. .bat and .ps1 launchers are Windows helpers only.
+2. Use pnpm commands directly on macOS.
+3. Core scripts are cross-platform now:
+	- pnpm dev
+	- pnpm soak:overnight
+
+## 12. Ultra-simple AI helper instructions for non-technical users
+
+If user gets stuck, they can copy this prompt into an AI coding assistant:
+
+I am not technical. Help me run this bot project safely in PAPER mode only.
+I am on Windows.
+I am in the project folder.
+Please give me one command at a time.
+After each command, wait and ask me to paste the output.
+Do not ask me to expose any private key or secret.
+If there is an error, explain it in plain English and give one safe fix.
+
+## 13. AI prompt for maintainers (you)
+
+Use this when helping friends/family remotely:
+
+Help me onboard a beginner user on Windows for this repo.
+Rules:
+1. PAPER mode only.
+2. One step at a time, no jargon.
+3. Ask for command output after each step.
+4. Never ask user to share secrets.
+5. If setup succeeds, run a final safety checklist.
+
+## 14. Final safety checklist before sharing this repo
+
+Run these commands:
+
+git ls-files ".env*"
+git ls-files | findstr /i ".db"
+git ls-files | findstr /i "logs/"
+git ls-files | findstr /i ".next-build .next-dev .turbo"
+
+All commands above should return no output.
+
+If any command prints files, stop and fix before sharing.

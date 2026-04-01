@@ -4,13 +4,13 @@
   "private": true,
   "packageManager": "pnpm@10.5.2",
   "scripts": {
-    "dev": "powershell -ExecutionPolicy Bypass -File ./scripts/kill-dashboard-next.ps1 && turbo run dev --parallel",
+    "dev": "turbo run dev --parallel",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "db:generate": "pnpm --filter @copybot/db db:generate",
     "db:push": "pnpm --filter @copybot/db exec prisma db push",
-    "soak:overnight": "powershell -ExecutionPolicy Bypass -File ./scripts/run-overnight.ps1 -Hours 8 -PollSeconds 30"
+    "soak:overnight": "node ./scripts/run-overnight.mjs --hours 8 --poll-seconds 30"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
