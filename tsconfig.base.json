@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@copybot/core": ["packages/core/src/index.ts"],
+      "@copybot/polymarket": ["packages/polymarket/src/index.ts"],
+      "@copybot/db": ["packages/db/src/index.ts"]
+    },
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "resolveJsonModule": true,
+    "outDir": "dist"
+  }
+}

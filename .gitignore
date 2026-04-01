@@ -1,0 +1,35 @@
+node_modules
+dist
+.next
+.next-dev
+.next-build
+.turbo
+.env
+.env.*
+coverage
+*.log
+
+# Local/runtime data
+logs/
+old db data/
+*.db
+*.db-*
+*.db.bak*
+*.sqlite
+*.sqlite3
+
+# Prisma local DB variants
+packages/db/prisma/dev.db
+packages/db/prisma/prisma/dev.db
+
+# Local launcher artifacts (contain machine-specific absolute paths)
+.bat-launchers/
+
+# Local diagnostics artifacts
+scripts/*_diag*.txt
+scripts/*_diag*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.tmp

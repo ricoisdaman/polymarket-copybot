@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model ConfigVersion {
+  id        String   @id @default(cuid())
+  profileId String   @default("default")
+  createdAt DateTime @default(now())
+  json      String
+  active    Boolean  @default(false)
+
+  @@index([profileId, active])
+}
+
+model LeaderCursor {
+  profileId           String   @default("default")
+  leaderWallet        String
+  lastSeenActivityKey String?
+  updatedAt           DateTime @updatedAt
+
+  @@id([profileId, leaderWallet])
+}
+
+model LeaderEvent {
+  id           String   @id @default(cuid())
+  profileId    String   @default("default")
+  dedupeKey    String
+  ts           DateTime
+  leaderWallet String
+  conditionId  String
+  tokenId      String
+  side         String
+  price        Float
+  size         Float
+  usdcSize     Float
+  rawJson      String
+
+  @@unique([profileId, dedupeKey])
+  @@index([profileId])
+}
+
+model CopyIntent {
+  id              String   @id @default(cuid())
+  profileId       String   @default("default")
+  leaderEventId   String
+  ts              DateTime
+  tokenId         String
+  side            String
+  leaderSize      Float    @default(0)
+  desiredNotional Float
+  desiredSize     Float
+  status          String
+  reason          String?
+  mode            String   @default("PAPER")
+
+  @@index([profileId])
+  @@index([profileId, mode])
+}
+
+model Order {
+  id          String   @id @default(cuid())
+  profileId   String   @default("default")
+  intentId    String
+  clobOrderId String?
+  ts          DateTime
+  side        String
+  price       Float
+  size        Float
+  status      String
+  lastUpdate  DateTime
+
+  @@index([profileId])
+}
+
+model Fill {
+  id            String   @id @default(cuid())
+  profileId     String   @default("default")
+  orderId       String
+  ts            DateTime
+  price         Float
+  size          Float
+  fee           Float
+  liquiditySide String
+
+  @@index([profileId])
+}
+
+model Position {
+  profileId  String   @default("default")
+  tokenId    String
+  size       Float
+  avgPrice   Float
+  updatedAt  DateTime @updatedAt
+
+  @@id([profileId, tokenId])
+}
+
+model Alert {
+  id             String    @id @default(cuid())
+  profileId      String    @default("default")
+  ts             DateTime
+  severity       String
+  code           String
+  message        String
+  contextJson    String
+  acknowledgedAt DateTime?
+
+  @@index([profileId])
+}
+
+model RuntimeMetric {
+  profileId String   @default("default")
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@id([profileId, key])
+}

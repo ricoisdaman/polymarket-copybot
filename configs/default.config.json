@@ -1,0 +1,60 @@
+{
+  "mode": "PAPER",
+  "leader": {
+    "wallet": "0x9d84ce0306f8551e02efef1680475fc0f1dc1344",
+    "copyBuys": true,
+    "copySells": true,
+    "feedMode": "DATA_API_POLL",
+    "pollIntervalSeconds": 1,
+    "sellFullPositionOnLeaderSell": true
+  },
+  "budget": {
+    "reserveUSDC": 5,
+    "safetyBufferUSDC": 0.25,
+    "perTradeNotionalUSDC": 1,
+    "minTradeNotionalUSDC": 0.5,
+    "maxTradeNotionalUSDC": 2,
+    "maxNotionalPerMarketUSDC": 3,
+    "maxOpenMarkets": 100,
+    "maxDailyNotionalUSDC": 25,
+    "maxDailyDrawdownUSDC": 30
+  },
+  "execution": {
+    "style": "TAKER",
+    "heartbeatIntervalSeconds": 5,
+    "maxTradesPerMinute": 10,
+    "maxSpreadBps": 1500,
+    "maxSlippageBps": 200,
+    "maxChaseSeconds": 8,
+    "maxRetries": 2,
+    "acceptPartialFillAndStop": true,
+    "maxEventAgeMs": 30000,
+    "maxLeaderToSubmitMs": 3000,
+    "topOfBookDepthMultiple": 3,
+    "takeProfitBps": 0,
+    "minMarketAgeRemainingMs": 0
+  },
+  "safety": {
+    "killSwitch": false,
+    "paused": false,
+    "pauseOnErrorStorm": true,
+    "botHeartbeatStaleSeconds": 120,
+    "errorStorm": {
+      "maxErrors": 10,
+      "windowSeconds": 60,
+      "pauseSeconds": 120
+    },
+    "reconcileIntervalSeconds": 30,
+    "wsStaleSeconds": 10,
+    "reconnectBackfillSeconds": 120,
+    "confirmBackfillSeconds": 90
+  },
+  "filters": {
+    "minPrice": 0.01,
+    "maxPrice": 0.99,
+    "blacklistConditionIds": [],
+    "blacklistTokenIds": [],
+    "excludeFeeEnabledMarkets": true,
+    "excludeLowLiquidityMarkets": true
+  }
+}

@@ -1,0 +1,284 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+/* ─── Hacker palette ─────────────────────────────────────────── */
+:root {
+  --hk-bg:          #080c08;
+  --hk-surface:     #0c1210;
+  --hk-surface-2:   #101a10;
+  --hk-border:      #1c3c1c;
+  --hk-accent:      #00ff41;
+  --hk-accent-dim:  #00cc33;
+  --hk-glow:        rgba(0, 255, 65, 0.18);
+  --hk-glow-sm:     rgba(0, 255, 65, 0.08);
+  --hk-text:        #b8e8b8;
+  --hk-text-dim:    #3d7a3d;
+  --hk-danger:      #ff3e3e;
+  --hk-warning:     #ffc107;
+
+  /* Bootstrap 5 overrides */
+  --bs-body-bg:              var(--hk-bg);
+  --bs-body-color:           var(--hk-text);
+  --bs-card-bg:              var(--hk-surface);
+  --bs-card-border-color:    var(--hk-border);
+  --bs-border-color:         var(--hk-border);
+  --bs-secondary-color:      var(--hk-text-dim);
+  --bs-table-color:          var(--hk-text);
+  --bs-table-bg:             transparent;
+  --bs-table-striped-bg:     var(--hk-surface-2);
+  --bs-table-hover-bg:       var(--hk-glow-sm);
+  --bs-table-border-color:   var(--hk-border);
+  --bs-success-rgb:          0, 220, 80;
+  --bs-danger-rgb:           255, 62, 62;
+}
+
+/* ─── Base ───────────────────────────────────────────────────── */
+body {
+  background: var(--hk-bg);
+  color: var(--hk-text);
+  font-family: 'Share Tech Mono', 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 0.875rem;
+}
+
+/* Subtle scanline overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.07) 2px,
+    rgba(0, 0, 0, 0.07) 4px
+  );
+  z-index: 9999;
+}
+
+/* ─── Layout ─────────────────────────────────────────────────── */
+.dashboard-shell {
+  max-width: 1280px;
+}
+
+/* ─── Header / Title ─────────────────────────────────────────── */
+.hk-title {
+  color: var(--hk-accent);
+  text-shadow: 0 0 12px var(--hk-accent), 0 0 30px rgba(0,255,65,0.4);
+  letter-spacing: 0.05em;
+}
+
+.hk-title::after {
+  content: '_';
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.hk-subtitle {
+  color: var(--hk-text-dim);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Badge overrides ────────────────────────────────────────── */
+.badge {
+  font-family: inherit;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+}
+
+.badge.text-bg-success {
+  background: transparent !important;
+  color: var(--hk-accent) !important;
+  border: 1px solid var(--hk-accent);
+  box-shadow: 0 0 8px var(--hk-glow);
+}
+
+.badge.text-bg-warning {
+  background: transparent !important;
+  color: var(--hk-warning) !important;
+  border: 1px solid var(--hk-warning);
+  box-shadow: 0 0 8px rgba(255, 193, 7, 0.3);
+}
+
+.badge.text-bg-danger {
+  background: transparent !important;
+  color: var(--hk-danger) !important;
+  border: 1px solid var(--hk-danger);
+  box-shadow: 0 0 8px rgba(255, 62, 62, 0.3);
+}
+
+.badge.text-bg-secondary {
+  background: transparent !important;
+  color: var(--hk-text-dim) !important;
+  border: 1px solid var(--hk-border);
+}
+
+/* ─── KPI cards ──────────────────────────────────────────────── */
+.card-kpi {
+  min-height: 100px;
+  background: var(--hk-surface) !important;
+  border: 1px solid var(--hk-border) !important;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.card-kpi:hover {
+  border-color: var(--hk-accent-dim) !important;
+  box-shadow: 0 0 14px var(--hk-glow) !important;
+}
+
+.kpi-label {
+  color: var(--hk-text-dim);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.kpi-value {
+  color: var(--hk-accent);
+  font-size: 1.35rem;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.5);
+  line-height: 1.2;
+}
+
+.kpi-sub {
+  color: var(--hk-text-dim);
+  font-size: 0.72rem;
+  margin-top: 0.2rem;
+}
+
+/* ─── Section cards ──────────────────────────────────────────── */
+.hk-card {
+  background: var(--hk-surface) !important;
+  border: 1px solid var(--hk-border) !important;
+  border-radius: 4px;
+}
+
+.hk-card-header {
+  background: var(--hk-surface-2) !important;
+  border-bottom: 1px solid var(--hk-border) !important;
+  color: var(--hk-accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.65rem 1rem;
+}
+
+.hk-card-header::before {
+  content: '> ';
+  opacity: 0.6;
+}
+
+/* ─── Tables ─────────────────────────────────────────────────── */
+.table {
+  --bs-table-color: var(--hk-text);
+  --bs-table-bg: transparent;
+  --bs-table-border-color: var(--hk-border);
+  --bs-table-striped-bg: var(--hk-surface-2);
+  --bs-table-hover-bg: var(--hk-glow-sm);
+  font-size: 0.82rem;
+}
+
+.table thead th {
+  background: var(--hk-surface-2) !important;
+  color: var(--hk-text-dim) !important;
+  border-color: var(--hk-border) !important;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.table tbody tr {
+  border-color: var(--hk-border) !important;
+}
+
+.table tbody td {
+  border-color: var(--hk-border) !important;
+}
+
+.text-success { color: #00e855 !important; }
+.text-danger  { color: var(--hk-danger) !important; }
+
+/* ─── Token cells ────────────────────────────────────────────── */
+.token-cell {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--hk-text);
+}
+
+.token-subtext {
+  font-size: 0.68rem;
+  color: var(--hk-text-dim);
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+/* ─── Alert list ─────────────────────────────────────────────── */
+.hk-alert-item {
+  color: var(--hk-text-dim);
+  font-size: 0.8rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--hk-border);
+}
+
+.hk-alert-item:last-child {
+  border-bottom: none;
+}
+
+.hk-alert-warn  { color: var(--hk-warning); }
+.hk-alert-error { color: var(--hk-danger); }
+.hk-alert-info  { color: var(--hk-accent-dim); }
+
+/* ─── Table totals footer ───────────────────────────────────── */
+.table-totals tr td {
+  border-top: 1px solid var(--hk-accent-dim) !important;
+  border-bottom: none !important;
+  background: var(--hk-surface-2) !important;
+  color: var(--hk-accent);
+  font-size: 0.82rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+/* ─── Charts section ─────────────────────────────────────────── */
+.chart-container {
+  height: 300px;
+}
+
+/* Recharts overrides for dark theme */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: var(--hk-border) !important;
+}
+
+.recharts-text,
+.recharts-legend-item-text {
+  fill: var(--hk-text-dim) !important;
+  font-family: 'Share Tech Mono', monospace !important;
+  font-size: 0.72rem !important;
+}
+
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--hk-surface-2) !important;
+  border: 1px solid var(--hk-border) !important;
+  border-radius: 4px !important;
+}
+
+.recharts-tooltip-label {
+  color: var(--hk-accent) !important;
+  font-family: inherit !important;
+}
+
+.recharts-tooltip-item {
+  color: var(--hk-text) !important;
+  font-family: inherit !important;
+}
+

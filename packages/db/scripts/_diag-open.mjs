@@ -1,0 +1,10 @@
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync("./prisma/dev.db");
+const open = db.prepare("SELECT COUNT(*) as n FROM Position WHERE profileId='leader2' AND size > 0.001").get();
+console.log("Open positions (leader2):", open.n);
+const cols = db.prepare("PRAGMA table_info(Alert)").all();
+console.log("Alert columns:", cols.map(c => c.name).join(", "));
+const alerts = db.prepare("SELECT * FROM Alert ORDER BY rowid DESC LIMIT 20").all();
+console.log("\n=== RECENT ALERTS ===");
+for (const r of alerts) console.log(" ", JSON.stringify(r));
+db.close();
