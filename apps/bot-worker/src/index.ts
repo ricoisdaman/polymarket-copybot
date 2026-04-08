@@ -11,6 +11,7 @@ import {
   countStalePlacedIntents,
   DEFAULT_PROFILE_ID,
   ensureActiveConfigVersion,
+  syncActiveConfigVersion,
   createAlert,
   createCopyIntent,
   createDbClient,
@@ -73,6 +74,11 @@ const alertCooldowns = new Map<string, number>();
 // drawdown baseline reflects the actual starting capital for this session rather
 // than the hardcoded default (which diverges after claims/deposits over time).
 let startingUSDC = Number(process.env.STARTING_USDC ?? 50);
+// Tracks the trading-day key used for the last drawdown baseline reset.
+// Reset independently from state.dailyKey so the reconcile loop can update
+// startingUSDC to current equity at each 6am UTC boundary regardless of
+// whether processEvent has already flipped state.dailyKey.
+let drawdownDayKey = "";
 const runtimeControl = {
   killSwitch: config.safety.killSwitch,
   paused: config.safety.paused
@@ -85,6 +91,27 @@ const counters = {
   fills: 0
 };
 const startedAtMs = Date.now();
+
+function getTradingDayStart(now = new Date()): Date {
+  const resetHour = config.budget.dailyResetHourUtc;
+  const start = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    resetHour,
+    0,
+    0,
+    0
+  ));
+  if (now.getTime() < start.getTime()) {
+    start.setUTCDate(start.getUTCDate() - 1);
+  }
+  return start;
+}
+
+function getTradingDayKey(now = new Date()): string {
+  return getTradingDayStart(now).toISOString().slice(0, 10);
+}
 
 function getClobCredentials(): ClobCredentials | null {
   const address       = process.env.POLYMARKET_WALLET_ADDRESS;
@@ -119,7 +146,7 @@ const state: RuntimeState = {
   positions: new Map<string, number>(),
   conditionByToken: new Map<string, string>(),
   dailyNotionalUSDC: 0,
-  dailyKey: new Date().toISOString().slice(0, 10)
+  dailyKey: getTradingDayKey()
 };
 
 async function hydratePaperRuntimeState(): Promise<void> {
@@ -169,7 +196,8 @@ async function hydratePaperRuntimeState(): Promise<void> {
 
   const orderToIntent = new Map(orders.map((order) => [order.id, order.intentId]));
   const intentToSide = new Map(intents.map((intent) => [intent.id, intent.side]));
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const tradingDayStart = getTradingDayStart();
+  const todayKey = getTradingDayKey();
   let netCashDelta = 0;
   let todayNotional = 0;
 
@@ -191,7 +219,7 @@ async function hydratePaperRuntimeState(): Promise<void> {
       netCashDelta += notional;
     }
 
-    if (fill.ts.toISOString().slice(0, 10) === todayKey) {
+    if (fill.ts >= tradingDayStart) {
       todayNotional += notional;
     }
   }
@@ -254,7 +282,7 @@ async function hydrateLiveRuntimeState(): Promise<void> {
 
   state.cashUSDC          = balance;
   state.positions.clear();
-  state.dailyKey          = new Date().toISOString().slice(0, 10);
+  state.dailyKey          = getTradingDayKey();
   state.dailyNotionalUSDC = 0;
 
   if (!isFirstLiveStart) {
@@ -287,10 +315,10 @@ async function hydrateLiveRuntimeState(): Promise<void> {
 
     const orderToIntent = new Map(orders.map((o) => [o.id, o.intentId]));
     const intentToSide  = new Map(intents.map((i) => [i.id, i.side]));
-    const todayKey = state.dailyKey;
+    const tradingDayStart = getTradingDayStart();
     let todayNotional = 0;
     for (const fill of fills) {
-      if (fill.ts.toISOString().slice(0, 10) !== todayKey) continue;
+      if (fill.ts < tradingDayStart) continue;
       const intentId = orderToIntent.get(fill.orderId);
       if (!intentId) continue;
       const side = intentToSide.get(intentId);
@@ -324,12 +352,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function resetDailyIfNeeded(): void {
-  const today = new Date().toISOString().slice(0, 10);
+function resetDailyIfNeeded(): boolean {
+  const today = getTradingDayKey();
   if (today !== state.dailyKey) {
     state.dailyKey = today;
     state.dailyNotionalUSDC = 0;
+    return true;
   }
+  return false;
 }
 
 function evaluateRisk(event: LeaderEvent, quote: QuoteEstimate): RiskDecision {
@@ -473,7 +503,7 @@ function evaluateRisk(event: LeaderEvent, quote: QuoteEstimate): RiskDecision {
   return { allowed: true, desiredNotional: finalNotional, desiredSize: finalSize };
 }
 
-function applyPaperFill(side: TradeSide, tokenId: string, fillSize: number, fillPrice: number, conditionId?: string): void {
+async function applyPaperFill(side: TradeSide, tokenId: string, fillSize: number, fillPrice: number, conditionId?: string): Promise<void> {
   const notional = fillSize * fillPrice;
   const currentPosition = state.positions.get(tokenId) ?? 0;
   if (side === "BUY") {
@@ -487,6 +517,8 @@ function applyPaperFill(side: TradeSide, tokenId: string, fillSize: number, fill
     if (next === 0) state.conditionByToken.delete(tokenId);
   }
   state.dailyNotionalUSDC = Number((state.dailyNotionalUSDC + notional).toFixed(4));
+  await setRuntimeMetric(prisma, profileId, "bot.cash_usdc", String(state.cashUSDC));
+  await setRuntimeMetric(prisma, profileId, "bot.daily_notional_usdc", String(state.dailyNotionalUSDC));
 }
 
 async function persistSkip(leaderEventId: string, event: LeaderEvent, reason: SkipReason): Promise<void> {
@@ -506,7 +538,22 @@ async function persistSkip(leaderEventId: string, event: LeaderEvent, reason: Sk
 
 async function processEvent(event: LeaderEvent): Promise<void> {
   counters.eventsSeen += 1;
-  resetDailyIfNeeded();
+  if (resetDailyIfNeeded()) {
+    await setRuntimeMetric(prisma, profileId, "bot.daily_notional_usdc", String(state.dailyNotionalUSDC));
+    if (haltedByDrawdown) {
+      haltedByDrawdown = false;
+      runtimeControl.paused = false;
+      await setRuntimeControlState(
+        prisma,
+        profileId,
+        { paused: false },
+        "bot-worker",
+        "Auto-resume: new trading day drawdown reset",
+        config
+      );
+      discord.send(`✅ New trading day — drawdown halt auto-cleared, trading resumed.`);
+    }
+  }
 
   let quote: QuoteEstimate;
   let negRisk = true;
@@ -514,7 +561,12 @@ async function processEvent(event: LeaderEvent): Promise<void> {
   if (config.mode === "LIVE") {
     const clobUrl = process.env.POLYMARKET_CLOB_API_URL ?? "https://clob.polymarket.com";
     try {
-      const lq = await fetchLiveQuote(clobUrl, event.conditionId, event.tokenId, event.side, event.size);
+      // Walk the book for the larger of: leader's size or our own expected order size.
+      // If perTradeNotional / price > event.size we need more depth than the leader used,
+      // and fetching only event.size would falsely trigger INSUFFICIENT_LIQUIDITY.
+      const expectedBotSize = config.budget.perTradeNotionalUSDC / Math.max(event.price, 0.0001);
+      const quoteSize = Math.max(event.size, expectedBotSize);
+      const lq = await fetchLiveQuote(clobUrl, event.conditionId, event.tokenId, event.side, quoteSize);
       quote = lq;
       negRisk = lq.negRisk;
     } catch (err) {
@@ -532,7 +584,9 @@ async function processEvent(event: LeaderEvent): Promise<void> {
     // This is what makes paper results a reliable predictor of live profitability.
     const clobUrl = process.env.POLYMARKET_CLOB_API_URL ?? "https://clob.polymarket.com";
     try {
-      const lq = await fetchLiveQuote(clobUrl, event.conditionId, event.tokenId, event.side, event.size);
+      const expectedBotSize = config.budget.perTradeNotionalUSDC / Math.max(event.price, 0.0001);
+      const quoteSize = Math.max(event.size, expectedBotSize);
+      const lq = await fetchLiveQuote(clobUrl, event.conditionId, event.tokenId, event.side, quoteSize);
       quote = lq;
     } catch {
       // CLOB unreachable — use leader's real execution price as the best available proxy.
@@ -588,7 +642,7 @@ async function processEvent(event: LeaderEvent): Promise<void> {
   }
 
   counters.fills += 1;
-  applyPaperFill(event.side, event.tokenId, execution.fillSize, execution.fillPrice, event.conditionId);
+  await applyPaperFill(event.side, event.tokenId, execution.fillSize, execution.fillPrice, event.conditionId);
   await upsertPositionDelta(prisma, profileId, event.tokenId, event.side, execution.fillSize, execution.fillPrice);
   await updateCopyIntentStatus(prisma, intentId, execution.status);
 
@@ -788,7 +842,7 @@ async function syncPositionsWithOnChain(liveCreds: ClobCredentials): Promise<voi
   // period, and have no matching on-chain entry.
   const dbOpenPositions = await prisma.position.findMany({
     where: { profileId, size: { gt: 0 }, updatedAt: { lt: graceCutoff } },
-    select: { tokenId: true, size: true }
+    select: { tokenId: true, size: true, avgPrice: true }
   });
 
   const toZero = dbOpenPositions
@@ -809,6 +863,25 @@ async function syncPositionsWithOnChain(liveCreds: ClobCredentials): Promise<voi
       `Zeroed ${toZero.length} positions no longer present on-chain (market resolved or sold)`,
       { count: toZero.length, sample: toZero.slice(0, 5) }
     );
+
+    // Fire a Discord alert for any position that resolved at $0 (full loss).
+    // Check Gamma API resolution value for each zeroed token; value=0 means the
+    // outcome lost (e.g. team didn't win). Fires per-position so each loss is visible.
+    try {
+      const resValues = await fetchTokenResolutionValues(toZero);
+      for (const tokenId of toZero) {
+        const resValue = resValues.get(tokenId);
+        if (resValue !== undefined && resValue <= 0.01) {
+          const pos = dbOpenPositions.find(p => p.tokenId === tokenId);
+          const costBasis = pos ? Number((pos.size * pos.avgPrice).toFixed(2)) : 0;
+          if (costBasis >= 0.01) {
+            discord.send(`🔴 **ZERO RESOLUTION** — position resolved at $0.00\n> token: \`${tokenId.slice(0, 16)}\` | cost basis: \$${costBasis} | full loss`);
+          }
+        }
+      }
+    } catch {
+      // Gamma API unavailable — skip resolution check, no alert lost
+    }
   }
 }
 
@@ -857,6 +930,37 @@ async function runReconcileChecks(): Promise<void> {
   const openPositions = await prisma.position.findMany({ where: { profileId, size: { gt: 0 } } });
   const costBasis = openPositions.reduce((sum, p) => sum + p.size * p.avgPrice, 0);
   const totalEquity = state.cashUSDC + Number(costBasis.toFixed(4));
+
+  // Reset the drawdown baseline at each new trading day so MAX_DAILY_DRAWDOWN_USDC
+  // applies as a true per-day limit rather than accumulating across bot sessions.
+  // This check runs in the reconcile loop (where totalEquity is freshly computed)
+  // using a separate day key so it fires exactly once per day regardless of
+  // whether processEvent has already advanced state.dailyKey.
+  const reconcileTodayKey = getTradingDayKey();
+  if (reconcileTodayKey !== drawdownDayKey) {
+    drawdownDayKey = reconcileTodayKey;
+    if (!process.env.STARTING_USDC) {
+      startingUSDC = totalEquity;
+      await setRuntimeMetric(prisma, profileId, "bot.drawdown_baseline_usdc", String(startingUSDC));
+    }
+    // Clear any carry-over drawdown halt from the previous day.
+    if (haltedByDrawdown) {
+      haltedByDrawdown = false;
+      runtimeControl.paused = false;
+      await setRuntimeControlState(
+        prisma,
+        profileId,
+        { paused: false },
+        "bot-worker",
+        "Auto-resume: new trading day drawdown reset",
+        config
+      );
+      discord.send(`✅ New trading day — drawdown baseline reset to \$${startingUSDC.toFixed(2)}, trading resumed.`);
+    } else {
+      discord.send(`📅 New trading day — drawdown baseline reset to \$${startingUSDC.toFixed(2)}.`);
+    }
+  }
+
   const drawdownUSDC = Number((startingUSDC - totalEquity).toFixed(4));
   lastComputedDrawdownUSDC = drawdownUSDC;
   if (drawdownUSDC >= config.budget.maxDailyDrawdownUSDC && !haltedByDrawdown) {
@@ -980,7 +1084,7 @@ async function syncPaperPositions(): Promise<void> {
   const graceCutoff = new Date(Date.now() - 10 * 60 * 1000);
   const dbOpenPositions = await prisma.position.findMany({
     where: { profileId, size: { gt: 0 }, updatedAt: { lt: graceCutoff } },
-    select: { tokenId: true, size: true }
+    select: { tokenId: true, size: true, avgPrice: true }
   });
 
   const toZero = dbOpenPositions.filter(p => !leaderPositions.has(p.tokenId));
@@ -1031,8 +1135,13 @@ async function syncPaperPositions(): Promise<void> {
       const settlementValue = resolutionValues.get(pos.tokenId);
       if (settlementValue !== undefined && settlementValue > 0) {
         cashCredit += pos.size * settlementValue;
+      } else {
+        // Resolution = 0 or unknown — full loss. Fire Discord alert with cost basis.
+        const costBasis = Number((pos.size * pos.avgPrice).toFixed(2));
+        if (costBasis >= 0.01) {
+          discord.send(`🔴 **ZERO RESOLUTION** (paper) — position resolved at $0.00\n> token: \`${pos.tokenId.slice(0, 16)}\` | cost basis: \$${costBasis} | full loss`);
+        }
       }
-      // else: resolution unknown or value = 0 — no cash returned
     }
   }
 
@@ -1191,7 +1300,7 @@ async function sendPeriodicStatusUpdate(): Promise<void> {
       by: ["status"],
       where: {
         profileId,
-        ts: { gte: new Date(new Date().toISOString().slice(0, 10)) }
+        ts: { gte: getTradingDayStart() }
       },
       _count: { _all: true }
     }),
@@ -1225,7 +1334,7 @@ async function sendPeriodicStatusUpdate(): Promise<void> {
 }
 
 async function startBotWorker(): Promise<void> {
-  await ensureActiveConfigVersion(prisma, profileId, config);
+  await syncActiveConfigVersion(prisma, profileId, config);
   await setRuntimeMetric(prisma, profileId, "bot.mode", config.mode);
 
   if (config.mode === "LIVE") {
@@ -1241,6 +1350,10 @@ async function startBotWorker(): Promise<void> {
     await ensurePaperStartupUnpaused();
     await hydratePaperRuntimeState();
   }
+
+  // Seed drawdownDayKey to the current trading day so the first reconcile cycle
+  // does not immediately treat today as a "new day" and incorrectly reset startingUSDC.
+  drawdownDayKey = getTradingDayKey();
 
   await syncRuntimeControl();
 

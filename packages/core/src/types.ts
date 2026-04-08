@@ -24,6 +24,7 @@ export type CopybotConfig = {
     maxOpenMarkets: number;
     maxDailyNotionalUSDC: number;
     maxDailyDrawdownUSDC: number;
+    dailyResetHourUtc: number;
   };
   execution: {
     style: "TAKER";

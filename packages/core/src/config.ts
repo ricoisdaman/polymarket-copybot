@@ -22,7 +22,8 @@ export const copybotConfigSchema = z.object({
     maxNotionalPerMarketUSDC: z.number().positive(),
     maxOpenMarkets: z.number().int().positive(),
     maxDailyNotionalUSDC: z.number().positive(),
-    maxDailyDrawdownUSDC: z.number().positive()
+    maxDailyDrawdownUSDC: z.number().positive(),
+    dailyResetHourUtc: z.number().int().min(0).max(23)
   }),
   execution: z.object({
     style: z.literal("TAKER"),
@@ -139,6 +140,7 @@ export function buildDefaultConfig(): CopybotConfig {
   const defaultEventAgeMs = feedMode === "DATA_API_POLL" ? 10000 : 3000;
   const maxEventAgeMsEnv = Number(getEnvValue("MAX_EVENT_AGE_MS") ?? defaultEventAgeMs);
   const maxDailyNotionalEnv = Number(getEnvValue("MAX_DAILY_NOTIONAL_USDC") ?? 25);
+  const dailyResetHourUtcEnv = Number(getEnvValue("DAILY_RESET_HOUR_UTC") ?? 0);
   const minOrderNotionalEnv = Number(getEnvValue("MIN_ORDER_NOTIONAL_USDC") ?? 1);
   const minOrderSharesEnv = Number(getEnvValue("MIN_ORDER_SHARES") ?? 5);
   const strictVenueConstraintsInPaper = getEnvValue("STRICT_VENUE_CONSTRAINTS_IN_PAPER") === "true";
@@ -155,6 +157,7 @@ export function buildDefaultConfig(): CopybotConfig {
     .map((k) => k.trim().toLowerCase())
     .filter((k) => k.length > 0);
   const maxChaseSecondsEnv = Number(getEnvValue("MAX_CHASE_SECONDS") ?? 30);
+  const maxDailyDrawdownUSDCEnv = Number(getEnvValue("MAX_DAILY_DRAWDOWN_USDC") ?? 30);
 
   const config: CopybotConfig = {
     mode,
@@ -175,7 +178,10 @@ export function buildDefaultConfig(): CopybotConfig {
       maxNotionalPerMarketUSDC: Number.isFinite(maxNotionalPerMarketEnv) && maxNotionalPerMarketEnv > 0 ? maxNotionalPerMarketEnv : 5,
       maxOpenMarkets: Number.isFinite(maxOpenMarketsEnv) && maxOpenMarketsEnv > 0 ? maxOpenMarketsEnv : 25,
       maxDailyNotionalUSDC: Number.isFinite(maxDailyNotionalEnv) && maxDailyNotionalEnv > 0 ? maxDailyNotionalEnv : 25,
-      maxDailyDrawdownUSDC: 30
+      maxDailyDrawdownUSDC: Number.isFinite(maxDailyDrawdownUSDCEnv) && maxDailyDrawdownUSDCEnv > 0 ? maxDailyDrawdownUSDCEnv : 30,
+      dailyResetHourUtc: Number.isFinite(dailyResetHourUtcEnv) && dailyResetHourUtcEnv >= 0 && dailyResetHourUtcEnv <= 23
+        ? Math.floor(dailyResetHourUtcEnv)
+        : 0
     },
     execution: {
       style: "TAKER",

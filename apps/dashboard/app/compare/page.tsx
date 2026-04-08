@@ -45,6 +45,24 @@ type PositionsSummaryResponse = {
   }[];
 };
 
+type ActiveConfigResponse = {
+  budget: {
+    maxNotionalPerMarketUSDC: number;
+    maxOpenMarkets: number;
+    maxDailyNotionalUSDC: number;
+    maxDailyDrawdownUSDC: number;
+    dailyResetHourUtc: number;
+  };
+  filters: {
+    minPrice: number;
+    maxPrice: number;
+    blockedTitleKeywords?: string[];
+  };
+};
+
+type RuntimeMetricRow = { key: string; value: string; updatedAt: string };
+type RuntimeMetricsResponse = { count: number; data: RuntimeMetricRow[] };
+
 async function fetchJson<T>(path: string): Promise<T | null> {
   try {
     const response = await fetch(`${apiBaseUrl}${path}`, { cache: "no-store" });
@@ -69,6 +87,8 @@ type ProfileData = {
   profileId: string;
   summary: SummaryResponse | null;
   positions: PositionsSummaryResponse | null;
+  activeConfig: ActiveConfigResponse | null;
+  runtimeMetrics: RuntimeMetricsResponse | null;
 };
 
 export default async function ComparePage() {
@@ -91,11 +111,13 @@ export default async function ComparePage() {
 
   const profileDataList: ProfileData[] = await Promise.all(
     profiles.map(async (pid) => {
-      const [summary, positions] = await Promise.all([
+      const [summary, positions, activeConfig, runtimeMetrics] = await Promise.all([
         fetchJson<SummaryResponse>(`/status/summary?profileId=${encodeURIComponent(pid)}`),
-        fetchJson<PositionsSummaryResponse>(`/positions/summary?profileId=${encodeURIComponent(pid)}`)
+        fetchJson<PositionsSummaryResponse>(`/positions/summary?profileId=${encodeURIComponent(pid)}`),
+        fetchJson<ActiveConfigResponse>(`/config/active?profileId=${encodeURIComponent(pid)}`),
+        fetchJson<RuntimeMetricsResponse>(`/metrics/runtime?profileId=${encodeURIComponent(pid)}&prefix=bot.`),
       ]);
-      return { profileId: pid, summary, positions };
+      return { profileId: pid, summary, positions, activeConfig, runtimeMetrics };
     })
   );
 
@@ -119,6 +141,13 @@ export default async function ComparePage() {
     const starting = data.summary?.startingBalanceUSDC;
     if (!starting || starting === 0) return null;
     return (totalPnlByProfile(data) / starting) * 100;
+  };
+
+  const metricNumber = (data: ProfileData, key: string): number => {
+    const row = data.runtimeMetrics?.data.find((m) => m.key === key);
+    if (!row) return 0;
+    const value = Number(row.value);
+    return Number.isFinite(value) ? value : 0;
   };
 
   return (
@@ -273,6 +302,86 @@ export default async function ComparePage() {
                 {profileDataList.map((d) => (
                   <td key={d.profileId} className="text-center" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                     {d.summary?.mode ?? "—"}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <td className="text-muted" style={{ fontSize: "0.78rem" }}>Price Filter</td>
+                {profileDataList.map((d) => (
+                  <td key={d.profileId} className="text-center" style={{ fontFamily: "monospace", fontSize: "0.75rem" }}>
+                    {d.activeConfig ? `${d.activeConfig.filters.minPrice.toFixed(2)} - ${d.activeConfig.filters.maxPrice.toFixed(2)}` : "—"}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <td className="text-muted" style={{ fontSize: "0.78rem" }}>Keyword Filters</td>
+                {profileDataList.map((d) => (
+                  <td key={d.profileId} className="text-center" style={{ fontFamily: "monospace", fontSize: "0.75rem" }}>
+                    {d.activeConfig ? (d.activeConfig.filters.blockedTitleKeywords?.length ?? 0) : "—"}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <td className="text-muted" style={{ fontSize: "0.78rem" }}>Trading-Day Notional Usage</td>
+                {profileDataList.map((d) => {
+                  const used = metricNumber(d, "bot.daily_notional_usdc");
+                  const limit = d.activeConfig?.budget.maxDailyNotionalUSDC ?? 0;
+                  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+                  const color = pct >= 90 ? "var(--hk-danger)" : pct >= 70 ? "#ff9500" : "#22c55e";
+                  return (
+                    <td key={d.profileId} className="text-center" style={{ fontSize: "0.74rem" }}>
+                      <div style={{ fontFamily: "monospace", color }}>{`$${used.toFixed(2)} / $${limit.toFixed(2)} (${pct.toFixed(0)}%)`}</div>
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td className="text-muted" style={{ fontSize: "0.78rem" }}>Drawdown Usage</td>
+                {profileDataList.map((d) => {
+                  const used = Math.max(0, d.summary?.drawdownUSDC ?? 0);
+                  const limit = d.activeConfig?.budget.maxDailyDrawdownUSDC ?? 0;
+                  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+                  const color = pct >= 90 ? "var(--hk-danger)" : pct >= 70 ? "#ff9500" : "#22c55e";
+                  return (
+                    <td key={d.profileId} className="text-center" style={{ fontFamily: "monospace", fontSize: "0.75rem", color }}>
+                      {`$${used.toFixed(2)} / $${limit.toFixed(2)} (${pct.toFixed(0)}%)`}
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td className="text-muted" style={{ fontSize: "0.78rem" }}>Largest Open Position</td>
+                {profileDataList.map((d) => {
+                  const largest = (d.positions?.open ?? []).reduce((mx, p) => Math.max(mx, p.amount), 0);
+                  const limit = d.activeConfig?.budget.maxNotionalPerMarketUSDC ?? 0;
+                  const pct = limit > 0 ? Math.min(100, (largest / limit) * 100) : 0;
+                  const color = pct >= 90 ? "var(--hk-danger)" : pct >= 70 ? "#ff9500" : "#22c55e";
+                  return (
+                    <td key={d.profileId} className="text-center" style={{ fontFamily: "monospace", fontSize: "0.75rem", color }}>
+                      {`$${largest.toFixed(2)} / $${limit.toFixed(2)} (${pct.toFixed(0)}%)`}
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td className="text-muted" style={{ fontSize: "0.78rem" }}>Open Markets Usage</td>
+                {profileDataList.map((d) => {
+                  const used = d.positions?.open.length ?? 0;
+                  const limit = d.activeConfig?.budget.maxOpenMarkets ?? 0;
+                  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+                  const color = pct >= 90 ? "var(--hk-danger)" : pct >= 70 ? "#ff9500" : "#22c55e";
+                  return (
+                    <td key={d.profileId} className="text-center" style={{ fontFamily: "monospace", fontSize: "0.75rem", color }}>
+                      {`${used} / ${limit} (${pct.toFixed(0)}%)`}
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td className="text-muted" style={{ fontSize: "0.78rem" }}>Daily Reset (UTC)</td>
+                {profileDataList.map((d) => (
+                  <td key={d.profileId} className="text-center" style={{ fontFamily: "monospace", fontSize: "0.75rem" }}>
+                    {d.activeConfig ? `${String(d.activeConfig.budget.dailyResetHourUtc).padStart(2, "0")}:00` : "—"}
                   </td>
                 ))}
               </tr>

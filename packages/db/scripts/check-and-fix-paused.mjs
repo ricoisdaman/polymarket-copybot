@@ -26,7 +26,7 @@ if (leader2) {
   const cfg = JSON.parse(leader2.json);
   console.log('\nLeader2 most recent config:');
   console.log('  id:', leader2.id, 'active:', leader2.active, 'paused:', cfg.safety?.paused);
-  
+
   if (cfg.safety?.paused) {
     cfg.safety.paused = false;
     cfg.safety.killSwitch = false;

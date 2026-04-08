@@ -103,16 +103,15 @@ async function runGuardianChecks(): Promise<void> {
     });
   }
 
-  if (stalePlaced > 0 && shouldEmit("INTENT_STUCK", 10_000)) {
+  if (stalePlaced > 0 && shouldEmit("INTENT_STUCK", 60_000)) {
     await createAlert(prisma, profileId, "WARN", "INTENT_STUCK", "Placed intents exceeded chase threshold", {
       stalePlaced,
       maxChaseSeconds: config.execution.maxChaseSeconds
     });
-    if (!control.paused) {
-      await setRuntimeControlState(prisma, profileId, { paused: true }, "guardian-worker", "Stale placed intents detected", config);
-      discord.send(`⏸️ **Bot paused** — ${stalePlaced} stuck intent(s) exceeded chase threshold`);
-      control.paused = true;
-    }
+    // NOTE: Do NOT pause here — stuck orders will fill eventually or be resolved by market
+    // expiry. Pausing the bot for a single stuck order and never auto-resuming causes a
+    // restart→re-detect→re-pause loop that stops all new trades indefinitely.
+    discord.send(`⚠️ **Stuck intent** — ${stalePlaced} order(s) exceeded chase threshold (${config.execution.maxChaseSeconds}s). Bot continues trading.`);
   }
 
   if (

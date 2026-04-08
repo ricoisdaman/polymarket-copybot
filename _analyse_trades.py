@@ -116,7 +116,7 @@ if prices:
     print(f"\n  Min fill price:  {min(prices):.4f}")
     print(f"  Max fill price:  {max(prices):.4f}")
     print(f"  Avg fill price:  {sum(prices)/len(prices):.4f}")
-    
+
     buckets = {
         "0.70–0.75": [p for p in prices if 0.70 <= p < 0.75],
         "0.75–0.80": [p for p in prices if 0.75 <= p < 0.80],

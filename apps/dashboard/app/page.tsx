@@ -111,6 +111,32 @@ type PositionsSummaryResponse = {
   closed: PositionSummaryRow[];
 };
 
+type ActiveConfigResponse = {
+  budget: {
+    maxNotionalPerMarketUSDC: number;
+    maxOpenMarkets: number;
+    maxDailyNotionalUSDC: number;
+    maxDailyDrawdownUSDC: number;
+    dailyResetHourUtc: number;
+  };
+  filters: {
+    minPrice: number;
+    maxPrice: number;
+    blockedTitleKeywords?: string[];
+  };
+};
+
+type RuntimeMetricRow = {
+  key: string;
+  value: string;
+  updatedAt: string;
+};
+
+type RuntimeMetricsResponse = {
+  count: number;
+  data: RuntimeMetricRow[];
+};
+
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:4000";
 
 async function fetchJson<T>(path: string): Promise<T | null> {
@@ -184,15 +210,27 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   const since = modeFilter === "LIVE" ? (summary?.liveStartedAt ?? Date.now()) : undefined;
   const activityMode = modeFilter === "ALL" ? undefined : modeFilter;
 
-  const [positions, activity, alerts, timeline, leaderActivity] = await Promise.all([
+  const [positions, activity, alerts, timeline, leaderActivity, activeConfig, runtimeMetrics] = await Promise.all([
     fetchJson<PositionsSummaryResponse>(buildUrl("/positions/summary", profileId, { since })),
     fetchJson<ActivityResponse>(buildUrl(`/activity/recent?limit=${intentPageSize}&offset=${intentOffset}`, profileId, { mode: activityMode })),
     fetchJson<AlertsResponse>(buildUrl("/alerts/recent?limit=8", profileId, { since })),
     fetchJson<TimelineResponse>(buildUrl("/timeline/recent?limit=16", profileId, { since })),
     fetchJson<LeaderActivityResponse>(buildUrl("/leader/activity?limit=50", profileId)),
+    fetchJson<ActiveConfigResponse>(buildUrl("/config/active", profileId)),
+    fetchJson<RuntimeMetricsResponse>(buildUrl("/metrics/runtime?prefix=bot.", profileId)),
   ]);
 
   const { pieData, pnlData } = buildChartData(summary, positions);
+  const metrics = new Map((runtimeMetrics?.data ?? []).map((m) => [m.key, m.value]));
+  const dailyUsed = Number(metrics.get("bot.daily_notional_usdc") ?? 0);
+  const dailyLimit = activeConfig?.budget.maxDailyNotionalUSDC ?? 0;
+  const drawdownUsed = Math.max(0, summary?.drawdownUSDC ?? 0);
+  const drawdownLimit = activeConfig?.budget.maxDailyDrawdownUSDC ?? 0;
+  const openMarketsUsed = positions?.open.length ?? 0;
+  const openMarketsLimit = activeConfig?.budget.maxOpenMarkets ?? 0;
+  const maxOpenPositionCost = positions?.open.reduce((mx, p) => Math.max(mx, p.amount), 0) ?? 0;
+  const perMarketLimit = activeConfig?.budget.maxNotionalPerMarketUSDC ?? 0;
+  const blockedKeywords = activeConfig?.filters.blockedTitleKeywords ?? [];
 
   return (
     <main className="container dashboard-shell py-4">
@@ -307,6 +345,61 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         </div>
         <div className="col-6 col-md-4 col-xl-2">
           <StatCard label="Closed Positions" value={String(positions?.closed.length ?? 0)} />
+        </div>
+      </section>
+
+      <section className="hk-card shadow-sm mb-4">
+        <div className="hk-card-header d-flex align-items-center justify-content-between">
+          <span>Filters &amp; Limit Health</span>
+          <span style={{ fontSize: "0.68rem", color: "var(--hk-text-dim)", letterSpacing: "0.05em" }}>
+            reset: {activeConfig ? `${String(activeConfig.budget.dailyResetHourUtc).padStart(2, "0")}:00 UTC` : "—"}
+          </span>
+        </div>
+        <div className="row g-3 p-3">
+          <div className="col-12 col-lg-6">
+            <div style={{ fontSize: "0.74rem", color: "var(--hk-text-dim)", letterSpacing: "0.06em", marginBottom: 6 }}>ENABLED FILTERS</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <span style={getTinyPillStyle("info")}>Price: {(activeConfig?.filters.minPrice ?? 0).toFixed(2)} - {(activeConfig?.filters.maxPrice ?? 1).toFixed(2)}</span>
+              <span style={getTinyPillStyle(blockedKeywords.length > 0 ? "warn" : "ok")}>Keywords: {blockedKeywords.length}</span>
+              <span style={getTinyPillStyle("ok")}>Mode: {summary?.mode ?? "OFFLINE"}</span>
+            </div>
+            {blockedKeywords.length > 0 && (
+              <div style={{ color: "var(--hk-text-dim)", fontSize: "0.72rem" }}>
+                {blockedKeywords.slice(0, 6).join(", ")}
+                {blockedKeywords.length > 6 ? " ..." : ""}
+              </div>
+            )}
+          </div>
+          <div className="col-12 col-lg-6">
+            <LimitMeter
+              label={`Trading-Day Notional (since ${String(activeConfig?.budget.dailyResetHourUtc ?? 0).padStart(2, "0")}:00 UTC)`}
+              used={dailyUsed}
+              limit={dailyLimit}
+              usedLabel={formatUsd(dailyUsed)}
+              limitLabel={formatUsd(dailyLimit)}
+            />
+            <LimitMeter
+              label="Drawdown"
+              used={drawdownUsed}
+              limit={drawdownLimit}
+              usedLabel={formatUsd(drawdownUsed)}
+              limitLabel={formatUsd(drawdownLimit)}
+            />
+            <LimitMeter
+              label="Open Markets"
+              used={openMarketsUsed}
+              limit={openMarketsLimit}
+              usedLabel={String(openMarketsUsed)}
+              limitLabel={String(openMarketsLimit)}
+            />
+            <LimitMeter
+              label="Largest Open Position"
+              used={maxOpenPositionCost}
+              limit={perMarketLimit}
+              usedLabel={formatUsd(maxOpenPositionCost)}
+              limitLabel={formatUsd(perMarketLimit)}
+            />
+          </div>
         </div>
       </section>
 
@@ -748,6 +841,51 @@ function StatCard({ label, value, subValue, valueColor }: { label: string; value
       </div>
     </div>
   );
+}
+
+function LimitMeter({
+  label,
+  used,
+  limit,
+  usedLabel,
+  limitLabel,
+}: {
+  label: string;
+  used: number;
+  limit: number;
+  usedLabel: string;
+  limitLabel: string;
+}) {
+  const safeLimit = limit > 0 ? limit : 0;
+  const ratio = safeLimit > 0 ? used / safeLimit : 0;
+  const pct = Math.max(0, Math.min(100, ratio * 100));
+  const color = pct >= 90 ? "var(--hk-danger)" : pct >= 70 ? "#ff9500" : "#00e855";
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.74rem" }}>
+        <span style={{ color: "var(--hk-text-dim)", letterSpacing: "0.05em" }}>{label}</span>
+        <span style={{ color }}>{usedLabel} / {limitLabel} ({pct.toFixed(0)}%)</span>
+      </div>
+      <div style={{ height: 7, background: "rgba(255,255,255,0.08)", borderRadius: 999 }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 999 }} />
+      </div>
+    </div>
+  );
+}
+
+function getTinyPillStyle(kind: "ok" | "warn" | "info"): CSSProperties {
+  const base: CSSProperties = {
+    display: "inline-block",
+    padding: "0.12rem 0.45rem",
+    borderRadius: 3,
+    fontSize: "0.7rem",
+    letterSpacing: "0.05em",
+    border: "1px solid transparent",
+  };
+  if (kind === "ok") return { ...base, color: "#00e855", background: "rgba(0,232,85,0.12)", borderColor: "rgba(0,232,85,0.35)" };
+  if (kind === "warn") return { ...base, color: "#ff9500", background: "rgba(255,149,0,0.12)", borderColor: "rgba(255,149,0,0.35)" };
+  return { ...base, color: "#00cfff", background: "rgba(0,207,255,0.12)", borderColor: "rgba(0,207,255,0.35)" };
 }
 
 /* ── Helpers ─────────────────────────────────────────────────── */

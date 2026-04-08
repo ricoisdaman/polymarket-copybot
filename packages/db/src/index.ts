@@ -365,10 +365,16 @@ export async function getPipelineSummary(prisma: PrismaClient, profileId: string
   };
 }
 
-export async function countLeaderEventsWithoutIntent(prisma: PrismaClient, profileId: string, olderThanSeconds: number): Promise<number> {
+export async function countLeaderEventsWithoutIntent(
+  prisma: PrismaClient,
+  profileId: string,
+  olderThanSeconds: number,
+  windowSeconds = 3600
+): Promise<number> {
   const cutoff = new Date(Date.now() - olderThanSeconds * 1000);
+  const windowStart = new Date(Date.now() - windowSeconds * 1000);
   const events = await prisma.leaderEvent.findMany({
-    where: { profileId, ts: { lt: cutoff } },
+    where: { profileId, ts: { gte: windowStart, lt: cutoff } },
     select: { id: true }
   });
 
@@ -429,6 +435,8 @@ export async function countRecentErrorAlerts(prisma: PrismaClient, profileId: st
 
 function parseConfigVersion(json: string): CopybotConfig {
   const parsed = JSON.parse(json) as Partial<CopybotConfig> & {
+    budget?: Partial<CopybotConfig["budget"]>;
+    filters?: Partial<CopybotConfig["filters"]>;
     leader?: Partial<CopybotConfig["leader"]>;
     execution?: Partial<CopybotConfig["execution"]>;
     safety?: Partial<CopybotConfig["safety"]>;
@@ -437,6 +445,10 @@ function parseConfigVersion(json: string): CopybotConfig {
   const normalized = {
     ...defaults,
     ...parsed,
+    budget: {
+      ...defaults.budget,
+      ...parsed.budget
+    },
     leader: {
       ...defaults.leader,
       ...parsed.leader,
@@ -453,6 +465,10 @@ function parseConfigVersion(json: string): CopybotConfig {
       ...parsed.safety,
       paused: parsed.safety?.paused ?? defaults.safety.paused,
       botHeartbeatStaleSeconds: parsed.safety?.botHeartbeatStaleSeconds ?? defaults.safety.botHeartbeatStaleSeconds
+    },
+    filters: {
+      ...defaults.filters,
+      ...parsed.filters
     }
   };
   return copybotConfigSchema.parse(normalized);
@@ -477,6 +493,60 @@ export async function ensureActiveConfigVersion(prisma: PrismaClient, profileId:
     }
   });
   return config;
+}
+
+/**
+ * On worker startup, sync the persisted active config snapshot to the current env-backed
+ * config while preserving runtime control flags (paused / killSwitch) from the DB.
+ * This prevents stale limits from old sessions from silently overriding new env changes.
+ */
+export async function syncActiveConfigVersion(prisma: PrismaClient, profileId: string, fallback: CopybotConfig): Promise<CopybotConfig> {
+  const active = await prisma.configVersion.findFirst({
+    where: { profileId, active: true },
+    orderBy: { createdAt: "desc" }
+  });
+
+  if (!active) {
+    await prisma.configVersion.create({
+      data: {
+        profileId,
+        json: JSON.stringify(fallback),
+        active: true
+      }
+    });
+    return fallback;
+  }
+
+  const current = parseConfigVersion(active.json);
+  const next: CopybotConfig = {
+    ...fallback,
+    safety: {
+      ...fallback.safety,
+      killSwitch: current.safety.killSwitch,
+      paused: current.safety.paused
+    }
+  };
+
+  const currentJson = JSON.stringify(current);
+  const nextJson = JSON.stringify(next);
+  if (currentJson === nextJson) {
+    return current;
+  }
+
+  await prisma.configVersion.updateMany({
+    where: { profileId, active: true },
+    data: { active: false }
+  });
+
+  await prisma.configVersion.create({
+    data: {
+      profileId,
+      json: nextJson,
+      active: true
+    }
+  });
+
+  return next;
 }
 
 export async function getActiveControlState(prisma: PrismaClient, profileId: string, fallback?: CopybotConfig): Promise<RuntimeControlState> {

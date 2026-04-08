@@ -68,6 +68,22 @@ const watchdogLog = path.join(runDir, "watchdog.log");
 
 function logWatchdog(line) {
   fs.appendFileSync(watchdogLog, `[${nowIso()}] ${line}\n`, "utf8");
+// ── DB snapshot before services start ────────────────────────────────────────
+// Copies dev.db into the overnight log folder so every run has a forensic
+// archive of exactly what state the DB was in at session start.
+const dbPath = path.join(root, "packages", "db", "prisma", "dev.db");
+if (fs.existsSync(dbPath)) {
+  const snapshotPath = path.join(runDir, "dev.db.snapshot");
+  try {
+    fs.copyFileSync(dbPath, snapshotPath);
+    console.log(`DB snapshot saved: ${snapshotPath}`);
+  } catch (err) {
+    console.warn(`DB snapshot failed (non-fatal): ${err.message}`);
+  }
+} else {
+  console.warn(`DB not found at ${dbPath} — skipping snapshot`);
+}
+
 }
 
 const services = [

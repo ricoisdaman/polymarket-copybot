@@ -67,6 +67,12 @@ app.get("/config/default", (_req, res) => {
   res.json(defaultConfig);
 });
 
+app.get("/config/active", async (req, res) => {
+  const profileId = getProfileId(req);
+  const activeConfig = await ensureActiveConfigVersion(prisma, profileId, defaultConfig);
+  res.json(activeConfig);
+});
+
 app.get("/activity/recent", async (req, res) => {
   const profileId = getProfileId(req);
   const limit = Number(req.query.limit ?? 50);

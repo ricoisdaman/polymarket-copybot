@@ -99,19 +99,19 @@ else:
 
 if all_fills:
     from collections import defaultdict
-    
+
     # FIFO P&L per tokenId
     token_data = defaultdict(list)
     for row in all_fills:
         ts, side, tokenId, price, size, fee, profileId = row
         token_data[tokenId].append({'ts': ts, 'side': side, 'price': price, 'size': size, 'fee': fee, 'profile': profileId})
-    
+
     total_realized = 0.0
     total_fees = 0.0
     total_invested = 0.0
     open_tokens = 0
     closed_tokens = 0
-    
+
     token_summary = []
     for tokenId, fills in token_data.items():
         buy_queue = []  # FIFO queue of (price, size)
@@ -119,7 +119,7 @@ if all_fills:
         fees = 0.0
         open_cost = 0.0
         open_shares = 0.0
-        
+
         for f in sorted(fills, key=lambda x: x['ts']):
             fees += f['fee']
             if f['side'] in ('BUY', 'buy'):
@@ -138,37 +138,37 @@ if all_fills:
                     buy_queue[0][1] -= consumed
                     if buy_queue[0][1] < 1e-9:
                         buy_queue.pop(0)
-        
+
         # Look up current DB size
         db_pos = c.execute("SELECT size FROM Position WHERE tokenId=?", (tokenId,)).fetchone()
         db_size = db_pos[0] if db_pos else 0.0
-        
+
         # Get last price from fills
         last_fill_price = fills[-1]['price'] if fills else 0.0
-        
+
         unrealized = open_shares * (last_fill_price - (open_cost / open_shares if open_shares > 0.001 else 0))
         total_pnl = realized + unrealized
-        
+
         total_realized += realized
         total_fees += fees
         total_invested += sum(f['price']*f['size'] for f in fills if f['side'] in ('BUY', 'buy'))
-        
+
         if open_shares > 0.001:
             open_tokens += 1
         else:
             closed_tokens += 1
-        
+
         token_summary.append((total_pnl, tokenId[:16], open_shares, realized, unrealized, fees, last_fill_price, db_size))
-    
+
     # Sort by P&L descending
     token_summary.sort(reverse=True)
-    
+
     p(f"\n  {'Token':18} {'OpenShares':>12} {'Realized':>10} {'Unrealized':>12} {'TotalPnL':>10} {'Fees':>8} {'LastPx':>8} {'DBSize':>8}")
     p(f"  {'-'*90}")
     for pnl, tok, os_, real, unreal, fees, lpx, dbs in token_summary:
         status = 'OPEN' if os_ > 0.001 else 'CLOSED'
         p(f"  {tok:18} {os_:>12.4f} {real:>10.4f} {unreal:>12.4f} {pnl:>10.4f} {fees:>8.4f} {lpx:>8.4f} {dbs:>8.4f} [{status}]")
-    
+
     p(f"\n  SUMMARY:")
     p(f"  Total invested (BUY notional): ${total_invested:.2f}")
     p(f"  Total realized P&L:            ${total_realized:.4f}")
