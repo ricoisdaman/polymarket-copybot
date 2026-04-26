@@ -339,7 +339,7 @@ export async function listRecentAlerts(prisma: PrismaClient, profileId: string, 
 
 export async function getPipelineSummary(prisma: PrismaClient, profileId: string, sinceTs?: number) {
   const tsFilter = sinceTs ? { ts: { gte: new Date(sinceTs) } } : {};
-  const [leaderEvents, intents, openPositions, alerts, cashMetric, drawdownMetric, liveStartMetric, startingBalanceMetric] = await Promise.all([
+  const [leaderEvents, intents, openPositions, alerts, cashMetric, drawdownMetric, liveStartMetric, startingBalanceMetric, unredeemedMetric, equityMetric] = await Promise.all([
     prisma.leaderEvent.count({ where: { profileId, ...tsFilter } }),
     prisma.copyIntent.count({ where: { profileId, ...tsFilter } }),
     prisma.position.count({ where: { profileId, size: { gt: 0 } } }),
@@ -347,21 +347,32 @@ export async function getPipelineSummary(prisma: PrismaClient, profileId: string
     getRuntimeMetricNumber(prisma, profileId, "bot.cash_usdc"),
     getRuntimeMetricNumber(prisma, profileId, "bot.drawdown_usdc"),
     getRuntimeMetricNumber(prisma, profileId, "bot.live_mode_started_at"),
-    getRuntimeMetricNumber(prisma, profileId, "bot.live_starting_usdc")
+    getRuntimeMetricNumber(prisma, profileId, "bot.live_starting_usdc"),
+    getRuntimeMetricNumber(prisma, profileId, "bot.unredeemed_usdc"),
+    getRuntimeMetricNumber(prisma, profileId, "bot.equity_usdc")
   ]);
+
+  const cash = cashMetric ?? 0;
+  const unredeemed = unredeemedMetric ?? 0;
+  // True portfolio value = cash + all position values (equity_usdc is written by the
+  // reconcile loop using resolution-aware position valuation). Falls back to cash
+  // + unredeemed for sessions that haven't run the new reconcile logic yet.
+  const portfolioValue = equityMetric ?? (cash + unredeemed);
 
   return {
     leaderEvents,
     intents,
     openPositions,
     alerts,
-    cashBalance: cashMetric ?? 0,
+    cashBalance: cash,
     drawdownUSDC: drawdownMetric ?? 0,
     liveStartedAt: liveStartMetric ?? null,
     // Starting balance written on first-ever LIVE boot; used by the dashboard to
-    // compute lifetime P&L as cashBalance + openMark - startingBalanceUSDC.
+    // compute lifetime P&L as portfolioValue - startingBalanceUSDC.
     // Defaults to 50 if the metric hasn't been written yet (pre-existing sessions).
-    startingBalanceUSDC: startingBalanceMetric ?? 50
+    startingBalanceUSDC: startingBalanceMetric ?? 50,
+    unredeemedUSDC: unredeemed,
+    portfolioValue
   };
 }
 

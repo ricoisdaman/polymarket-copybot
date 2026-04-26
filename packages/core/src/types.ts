@@ -67,6 +67,8 @@ export type CopybotConfig = {
     blacklistConditionIds: string[];
     blacklistTokenIds: string[];
     blockedTitleKeywords: string[];
+    blockedSlugPrefixes: string[];
+    sportPriceFilters: Record<string, { min: number; max: number }>;
     excludeFeeEnabledMarkets: boolean;
     excludeLowLiquidityMarkets: boolean;
   };
@@ -112,7 +114,9 @@ export type SkipReason =
   | "MIN_ORDER_SHARES"
   | "NO_POSITION_TO_SELL"
   | "DUPLICATE_EVENT"
-  | "TITLE_BLOCKED";
+  | "TITLE_BLOCKED"
+  | "SLUG_BLOCKED"
+  | "SPORT_PRICE_FILTER";
 
 export type QuoteEstimate = {
   tokenId: string;

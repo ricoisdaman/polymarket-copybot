@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import PortfolioCharts, { type PieSlice, type PnlPoint } from "./components/PortfolioCharts";
 import ProfileSwitcher from "./components/ProfileSwitcher";
 import ResumeButton from "./components/ResumeButton";
+import FiltersPanel from "./components/FiltersPanel";
 
 type SummaryResponse = {
   leaderEvents: number;
@@ -20,6 +21,10 @@ type SummaryResponse = {
     paused: boolean;
   };
   ts: number;
+  /** USDC value of resolved-YES positions not yet redeemed on Polymarket */
+  unredeemedUSDC: number;
+  /** True portfolio value = cash + all position values (resolution-aware) */
+  portfolioValue: number;
 };
 
 type RecentIntent = {
@@ -165,11 +170,13 @@ function buildChartData(
   summary: SummaryResponse | null,
   positions: PositionsSummaryResponse | null
 ): { pieData: PieSlice[]; pnlData: PnlPoint[] } {
-  // Pie: cash balance + each open position's current value
+  // Pie: available cash + unclaimed winnings + each open position's current value
   const cash = summary?.cashBalance ?? 0;
+  const unredeemed = summary?.unredeemedUSDC ?? 0;
   const open = positions?.open ?? [];
   const pieData: PieSlice[] = [
     { name: "Cash", value: cash },
+    ...(unredeemed > 0 ? [{ name: "Unclaimed Winnings", value: unredeemed }] : []),
     ...open.map((p) => ({
       name: p.marketTitle.length > 28 ? p.marketTitle.slice(0, 26) + "\u2026" : p.marketTitle,
       value: p.currentValue,
@@ -310,17 +317,26 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           <StatCard label="Mode" value={summary?.mode ?? "OFFLINE"} />
         </div>
         <div className="col-6 col-md-4 col-xl-2">
-          <StatCard label="Cash Balance" value={formatUsd(summary?.cashBalance ?? 0)} />
+          {(() => {
+            const portfolio = summary?.portfolioValue ?? summary?.cashBalance ?? 0;
+            const unredeemed = summary?.unredeemedUSDC ?? 0;
+            const subVal = unredeemed > 0 ? `Cash: ${formatUsd(summary?.cashBalance ?? 0)} + Unclaimed: ${formatUsd(unredeemed)}` : `Cash: ${formatUsd(summary?.cashBalance ?? 0)}`;
+            return (
+              <StatCard
+                label="Portfolio Value"
+                value={formatUsd(portfolio)}
+                subValue={subVal}
+              />
+            );
+          })()}
         </div>
         <div className="col-6 col-md-4 col-xl-2">
           {(() => {
-            // True lifetime P&L = current wallet value (cash + open positions at
-            // mark) minus the original starting capital. This correctly accounts
-            // for resolved/claimed markets that never had a SELL fill in our DB.
-            const openMark = positions?.open.reduce((s, r) => s + r.currentValue, 0) ?? 0;
-            const cash = summary?.cashBalance ?? 0;
+            // True lifetime P&L = portfolio value (cash + resolution-aware position
+            // values including unclaimed YES winnings) minus the original starting capital.
+            const portfolio = summary?.portfolioValue ?? summary?.cashBalance ?? 0;
             const startingBalance = summary?.startingBalanceUSDC ?? 50;
-            const totalPnl = cash + openMark - startingBalance;
+            const totalPnl = portfolio - startingBalance;
             const openUnrealized = positions?.open.reduce((s, r) => s + r.pnl, 0) ?? 0;
             const roiPct = startingBalance > 0 ? (totalPnl / startingBalance) * 100 : 0;
             return (
@@ -400,6 +416,14 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
               limitLabel={formatUsd(perMarketLimit)}
             />
           </div>
+        </div>
+      </section>
+
+      {/* ── Sport Filter Control Panel ────────────────────────── */}
+      <section className="hk-card shadow-sm mb-4">
+        <div className="hk-card-header">Sport Filter Panel</div>
+        <div className="p-3">
+          <FiltersPanel profileId={profileId} apiBaseUrl={apiBaseUrl} />
         </div>
       </section>
 

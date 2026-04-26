@@ -66,6 +66,22 @@ importers:
         specifier: ^4.19.3
         version: 4.21.0
 
+  apps/bot-worker-v2:
+    dependencies:
+      '@copybot/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@copybot/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@copybot/polymarket':
+        specifier: workspace:*
+        version: link:../../packages/polymarket
+    devDependencies:
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+
   apps/dashboard:
     dependencies:
       bootstrap:

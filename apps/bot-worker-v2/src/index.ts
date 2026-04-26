@@ -352,16 +352,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function resetDailyIfNeeded(): boolean {
-  const today = getTradingDayKey();
-  if (today !== state.dailyKey) {
-    state.dailyKey = today;
-    state.dailyNotionalUSDC = 0;
-    return true;
-  }
-  return false;
-}
-
 /** Maps a market slug to a sport key used in sportPriceFilters. */
 function detectSport(slug: string): string | null {
   if (!slug) return null;
@@ -373,6 +363,16 @@ function detectSport(slug: string): string | null {
   if (slug.startsWith("ncaa-") || slug.startsWith("college-basketball-")) return "ncaa_bb";
   if (slug.startsWith("mls-") || slug.startsWith("epl-") || slug.startsWith("ucl-") || slug.startsWith("soccer-")) return "soccer";
   return null;
+}
+
+function resetDailyIfNeeded(): boolean {
+  const today = getTradingDayKey();
+  if (today !== state.dailyKey) {
+    state.dailyKey = today;
+    state.dailyNotionalUSDC = 0;
+    return true;
+  }
+  return false;
 }
 
 function evaluateRisk(event: LeaderEvent, quote: QuoteEstimate): RiskDecision {
@@ -422,7 +422,7 @@ function evaluateRisk(event: LeaderEvent, quote: QuoteEstimate): RiskDecision {
   }
 
   // Per-sport price filter: overrides global min/max for specific sports.
-  // Configured via SPORT_PRICE_FILTERS=tennis:0.70:0.88,mlb:0.75:0.88
+  // Configured via SPORT_PRICE_FILTERS=tennis:0.70:0.88,mlb:0.60:0.80
   if (event.side === "BUY" && Object.keys(config.filters.sportPriceFilters).length > 0) {
     const slug = String(event.raw?.slug ?? event.raw?.eventSlug ?? "").toLowerCase();
     const sport = detectSport(slug);
@@ -1407,6 +1407,27 @@ async function sendPeriodicStatusUpdate(): Promise<void> {
 async function startBotWorker(): Promise<void> {
   await syncActiveConfigVersion(prisma, profileId, config);
   await setRuntimeMetric(prisma, profileId, "bot.mode", config.mode);
+
+  // Load any dashboard-saved filter overrides (stored via POST /config/sport-filters)
+  try {
+    const overrideMetric = await getRuntimeMetric(prisma, profileId, "bot.sport_filter_overrides");
+    if (overrideMetric?.value) {
+      const overrides = JSON.parse(overrideMetric.value) as {
+        global?: { min?: number; max?: number };
+        sports?: Record<string, { min: number; max: number }>;
+        blockedSlugPrefixes?: string[];
+        blockedTitleKeywords?: string[];
+      };
+      if (typeof overrides.global?.min === "number") config.filters.minPrice = overrides.global.min;
+      if (typeof overrides.global?.max === "number") config.filters.maxPrice = overrides.global.max;
+      if (overrides.sports) Object.assign(config.filters.sportPriceFilters, overrides.sports);
+      if (Array.isArray(overrides.blockedSlugPrefixes)) config.filters.blockedSlugPrefixes = overrides.blockedSlugPrefixes;
+      if (Array.isArray(overrides.blockedTitleKeywords)) config.filters.blockedTitleKeywords = overrides.blockedTitleKeywords;
+      console.log("bot-worker-v2 loaded dashboard filter overrides", overrides);
+    }
+  } catch (e) {
+    console.warn("bot-worker-v2 could not load dashboard filter overrides (non-fatal):", e instanceof Error ? e.message : String(e));
+  }
 
   if (config.mode === "LIVE") {
     await hydrateLiveRuntimeState();

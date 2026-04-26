@@ -15,7 +15,8 @@ import {
   listRecentAlerts,
   listRuntimeMetrics,
   listRecentTimeline,
-  setRuntimeControlState
+  setRuntimeControlState,
+  setRuntimeMetric
 } from "@copybot/db";
 import { fetchMidPrices, fetchTokenResolutionValues } from "@copybot/polymarket";
 
@@ -292,6 +293,310 @@ app.get("/events", (req, res) => {
 
   res.on("close", () => {
     clearInterval(interval);
+  });
+});
+
+// ── Sport detection helper (mirrors bot-worker-v2 logic) ─────────────────────
+function detectSport(slug: string): string | null {
+  if (!slug) return null;
+  if (slug.startsWith("atp-") || slug.startsWith("wta-") || slug.startsWith("tennis-")) return "tennis";
+  if (slug.startsWith("mlb-")) return "mlb";
+  if (slug.startsWith("nba-")) return "nba";
+  if (slug.startsWith("nhl-")) return "nhl";
+  if (slug.startsWith("nfl-")) return "nfl";
+  if (slug.startsWith("ncaa-") || slug.startsWith("college-basketball-")) return "ncaa_bb";
+  if (slug.startsWith("mls-") || slug.startsWith("epl-") || slug.startsWith("ucl-") || slug.startsWith("soccer-")) return "soccer";
+  return null;
+}
+
+// ── GET /analytics/sport-stats — per-sport win rate + P&L for a profile ──────
+// Returns stats computed from fills + positions. Use ?days=30 to change window.
+app.get("/analytics/sport-stats", async (req, res) => {
+  const profileId = getProfileId(req);
+  const days = Math.min(365, Math.max(1, Number(req.query.days ?? 30)));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // Step 1: get all BUY intents with leaderEventId in the window
+  const buyIntents = await prisma.copyIntent.findMany({
+    where: { profileId, side: "BUY", status: { in: ["FILLED", "PARTIALLY_FILLED_OK"] }, ts: { gte: since } },
+    select: { id: true, tokenId: true, leaderEventId: true }
+  });
+
+  if (buyIntents.length === 0) {
+    res.json({ sports: [] });
+    return;
+  }
+
+  // Step 2: get slugs from leader events
+  const leaderEventIds = [...new Set(buyIntents.map((i) => i.leaderEventId).filter(Boolean))];
+  const leaderEvents = await prisma.leaderEvent.findMany({
+    where: { id: { in: leaderEventIds } },
+    select: { id: true, tokenId: true, rawJson: true }
+  });
+  const slugByLeaderEventId = new Map<string, string>();
+  for (const ev of leaderEvents) {
+    try {
+      const raw = JSON.parse(ev.rawJson) as { slug?: string; eventSlug?: string };
+      const slug = (raw.slug ?? raw.eventSlug ?? "").toLowerCase();
+      if (slug) slugByLeaderEventId.set(ev.id, slug);
+    } catch { /* ignore */ }
+  }
+
+  // Step 3: map tokenId → sport
+  const sportByTokenId = new Map<string, string>();
+  for (const intent of buyIntents) {
+    const slug = slugByLeaderEventId.get(intent.leaderEventId) ?? "";
+    const sport = detectSport(slug);
+    if (sport && !sportByTokenId.has(intent.tokenId)) {
+      sportByTokenId.set(intent.tokenId, sport);
+    }
+  }
+
+  // Step 4: get fills for these intents (via orders)
+  const intentIds = buyIntents.map((i) => i.id);
+  const orders = await prisma.order.findMany({
+    where: { profileId, intentId: { in: intentIds } },
+    select: { id: true, intentId: true, side: true }
+  });
+  const orderToIntent = new Map(orders.map((o) => [o.id, o.intentId]));
+  const intentToTokenId = new Map(buyIntents.map((i) => [i.id, i.tokenId]));
+
+  const orderIds = orders.map((o) => o.id);
+  const allFills = await prisma.fill.findMany({
+    where: { profileId, orderId: { in: orderIds } },
+    select: { orderId: true, price: true, size: true }
+  });
+
+  // Step 5: also get SELL fills for these tokens (to compute P&L)
+  const uniqueTokenIds = [...new Set(buyIntents.map((i) => i.tokenId))];
+  const sellIntents = await prisma.copyIntent.findMany({
+    where: { profileId, side: "SELL", tokenId: { in: uniqueTokenIds } },
+    select: { id: true, tokenId: true }
+  });
+  const sellIntentIds = sellIntents.map((i) => i.id);
+  const sellOrders = await prisma.order.findMany({
+    where: { profileId, intentId: { in: sellIntentIds } },
+    select: { id: true, intentId: true }
+  });
+  const sellOrderIds = sellOrders.map((o) => o.id);
+  const sellFills = await prisma.fill.findMany({
+    where: { profileId, orderId: { in: sellOrderIds } },
+    select: { orderId: true, price: true, size: true }
+  });
+  const sellIntentToTokenId = new Map(sellIntents.map((i) => [i.id, i.tokenId]));
+  const sellOrderToIntent = new Map(sellOrders.map((o) => [o.id, o.intentId]));
+
+  // Step 6: aggregate per tokenId
+  type TokenStats = { buyCost: number; buyShares: number; sellRevenue: number; sellShares: number };
+  const byToken = new Map<string, TokenStats>();
+
+  for (const fill of allFills) {
+    const intentId = orderToIntent.get(fill.orderId);
+    if (!intentId) continue;
+    const tokenId = intentToTokenId.get(intentId);
+    if (!tokenId) continue;
+    const st = byToken.get(tokenId) ?? { buyCost: 0, buyShares: 0, sellRevenue: 0, sellShares: 0 };
+    st.buyCost += fill.size * fill.price;
+    st.buyShares += fill.size;
+    byToken.set(tokenId, st);
+  }
+
+  for (const fill of sellFills) {
+    const intentId = sellOrderToIntent.get(fill.orderId);
+    if (!intentId) continue;
+    const tokenId = sellIntentToTokenId.get(intentId);
+    if (!tokenId) continue;
+    const st = byToken.get(tokenId) ?? { buyCost: 0, buyShares: 0, sellRevenue: 0, sellShares: 0 };
+    st.sellRevenue += fill.size * fill.price;
+    st.sellShares += fill.size;
+    byToken.set(tokenId, st);
+  }
+
+  // Step 7: get position states
+  const positions = await prisma.position.findMany({
+    where: { profileId, tokenId: { in: uniqueTokenIds } },
+    select: { tokenId: true, size: true, avgPrice: true }
+  });
+  const positionByToken = new Map(positions.map((p) => [p.tokenId, p]));
+
+  // Step 8: aggregate per sport
+  type SportStats = { trades: number; wins: number; losses: number; open: number; pnl: number; totalCost: number };
+  const bySport = new Map<string, SportStats>();
+
+  for (const [tokenId, stats] of byToken) {
+    const sport = sportByTokenId.get(tokenId) ?? "other";
+    const pos = positionByToken.get(tokenId);
+    const isClosed = !pos || pos.size < 0.001;
+    const hasSellFill = stats.sellShares > 0;
+    const sp = bySport.get(sport) ?? { trades: 0, wins: 0, losses: 0, open: 0, pnl: 0, totalCost: 0 };
+    sp.trades += 1;
+    sp.totalCost += stats.buyCost;
+    if (isClosed) {
+      if (hasSellFill) {
+        // Closed via SELL fill (synthetic close or real sell)
+        const pnl = stats.sellRevenue - stats.buyCost;
+        sp.pnl += pnl;
+        if (pnl >= 0) sp.wins += 1; else sp.losses += 1;
+      } else {
+        // Closed without sell fill = market resolved at 0 (full loss)
+        sp.pnl -= stats.buyCost;
+        sp.losses += 1;
+      }
+    } else {
+      // Open position: mark to avgPrice (neutral)
+      sp.open += 1;
+      const markPnl = stats.buyCost > 0 ? (pos.avgPrice - (stats.buyCost / Math.max(stats.buyShares, 0.0001))) * stats.buyShares : 0;
+      sp.pnl += markPnl;
+    }
+    bySport.set(sport, sp);
+  }
+
+  const sports = [...bySport.entries()]
+    .map(([sport, s]) => ({
+      sport,
+      trades: s.trades,
+      wins: s.wins,
+      losses: s.losses,
+      open: s.open,
+      winRate: s.trades > 0 ? Number((s.wins / (s.wins + s.losses || 1)).toFixed(4)) : 0,
+      pnl: Number(s.pnl.toFixed(4)),
+      totalCost: Number(s.totalCost.toFixed(4))
+    }))
+    .sort((a, b) => b.trades - a.trades);
+
+  res.json({ sports, days });
+});
+
+// ── GET /config/sport-filters — current filter settings for a profile ─────────
+app.get("/config/sport-filters", async (req, res) => {
+  const profileId = getProfileId(req);
+  const [activeConfig, overrideMetric] = await Promise.all([
+    ensureActiveConfigVersion(prisma, profileId, defaultConfig),
+    getRuntimeMetric(prisma, profileId, "bot.sport_filter_overrides")
+  ]);
+
+  let dashboardOverrides: Record<string, unknown> = {};
+  if (overrideMetric?.value) {
+    try { dashboardOverrides = JSON.parse(overrideMetric.value) as Record<string, unknown>; } catch { /* ignore */ }
+  }
+
+  res.json({
+    global: {
+      min: activeConfig.filters.minPrice,
+      max: activeConfig.filters.maxPrice
+    },
+    sports: activeConfig.filters.sportPriceFilters,
+    blockedSlugPrefixes: activeConfig.filters.blockedSlugPrefixes,
+    blockedTitleKeywords: activeConfig.filters.blockedTitleKeywords,
+    dashboardOverrides
+  });
+});
+
+// ── POST /config/sport-filters — save filter overrides (applied on bot restart) 
+app.post("/config/sport-filters", async (req, res) => {
+  const profileId = getProfileId(req);
+  const body = (req.body ?? {}) as {
+    global?: { min?: number; max?: number };
+    sports?: Record<string, { min: number; max: number }>;
+    blockedSlugPrefixes?: string[];
+    blockedTitleKeywords?: string[];
+  };
+
+  // Basic validation
+  const global = body.global;
+  if (global) {
+    if (typeof global.min === "number" && (global.min < 0 || global.min > 1)) {
+      res.status(400).json({ error: "global.min must be between 0 and 1" });
+      return;
+    }
+    if (typeof global.max === "number" && (global.max < 0 || global.max > 1)) {
+      res.status(400).json({ error: "global.max must be between 0 and 1" });
+      return;
+    }
+  }
+
+  if (body.sports) {
+    for (const [sport, filter] of Object.entries(body.sports)) {
+      if (typeof filter.min !== "number" || filter.min < 0 || filter.min > 1 ||
+          typeof filter.max !== "number" || filter.max < 0 || filter.max > 1) {
+        res.status(400).json({ error: `Invalid filter for sport "${sport}": min/max must be 0-1` });
+        return;
+      }
+    }
+  }
+
+  const overrides = {
+    ...(global && { global }),
+    ...(body.sports && { sports: body.sports }),
+    ...(Array.isArray(body.blockedSlugPrefixes) && { blockedSlugPrefixes: body.blockedSlugPrefixes }),
+    ...(Array.isArray(body.blockedTitleKeywords) && { blockedTitleKeywords: body.blockedTitleKeywords })
+  };
+
+  await setRuntimeMetric(prisma, profileId, "bot.sport_filter_overrides", JSON.stringify(overrides));
+
+  res.json({ saved: true, restartRequired: true, profileId });
+});
+
+// ── GET /analytics/sport-stats/simulate — impact of proposed filters on recent trades
+app.get("/analytics/sport-stats/simulate", async (req, res) => {
+  const profileId = getProfileId(req);
+  const days = Math.min(90, Math.max(1, Number(req.query.days ?? 30)));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // Parse proposed filters from query params
+  // e.g. ?sports=tennis:0.70:0.88,mlb:0.60:0.80&globalMin=0.60&globalMax=0.88
+  const globalMin = req.query.globalMin ? Number(req.query.globalMin) : undefined;
+  const globalMax = req.query.globalMax ? Number(req.query.globalMax) : undefined;
+  const sportsRaw = String(req.query.sports ?? "");
+  const proposedSports: Record<string, { min: number; max: number }> = {};
+  for (const entry of sportsRaw.split(",")) {
+    const parts = entry.split(":");
+    if (parts.length === 3) {
+      const sport = parts[0].trim().toLowerCase();
+      const min = Number(parts[1]);
+      const max = Number(parts[2]);
+      if (sport && Number.isFinite(min) && Number.isFinite(max)) {
+        proposedSports[sport] = { min, max };
+      }
+    }
+  }
+
+  // Get leader BUY events in the window
+  const leaderEvents = await prisma.leaderEvent.findMany({
+    where: { profileId, side: "BUY", ts: { gte: since } },
+    select: { id: true, tokenId: true, price: true, rawJson: true }
+  });
+
+  let wouldTrade = 0;
+  let wouldBlock = 0;
+
+  for (const ev of leaderEvents) {
+    let slug = "";
+    try {
+      const raw = JSON.parse(ev.rawJson) as { slug?: string; eventSlug?: string };
+      slug = (raw.slug ?? raw.eventSlug ?? "").toLowerCase();
+    } catch { /* ignore */ }
+
+    const sport = detectSport(slug);
+    const gMin = globalMin ?? 0;
+    const gMax = globalMax ?? 1;
+
+    if (ev.price < gMin || ev.price > gMax) { wouldBlock++; continue; }
+
+    if (sport && proposedSports[sport]) {
+      const sf = proposedSports[sport];
+      if (ev.price < sf.min || ev.price > sf.max) { wouldBlock++; continue; }
+    }
+
+    wouldTrade++;
+  }
+
+  res.json({
+    days,
+    total: leaderEvents.length,
+    wouldTrade,
+    wouldBlock,
+    blockRate: leaderEvents.length > 0 ? Number((wouldBlock / leaderEvents.length).toFixed(4)) : 0
   });
 });
 

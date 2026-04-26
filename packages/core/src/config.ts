@@ -64,6 +64,8 @@ export const copybotConfigSchema = z.object({
     blacklistConditionIds: z.array(z.string()),
     blacklistTokenIds: z.array(z.string()),
     blockedTitleKeywords: z.array(z.string()).default([]),
+    blockedSlugPrefixes: z.array(z.string()).default([]),
+    sportPriceFilters: z.record(z.object({ min: z.number().gte(0).lte(1), max: z.number().gte(0).lte(1) })).default({}),
     excludeFeeEnabledMarkets: z.boolean(),
     excludeLowLiquidityMarkets: z.boolean()
   })
@@ -156,6 +158,24 @@ export function buildDefaultConfig(): CopybotConfig {
     .split(",")
     .map((k) => k.trim().toLowerCase())
     .filter((k) => k.length > 0);
+  const blockedSlugPrefixesRaw = getEnvValue("BLOCKED_SLUG_PREFIXES") ?? "";
+  const blockedSlugPrefixes = blockedSlugPrefixesRaw
+    .split(",")
+    .map((k) => k.trim().toLowerCase())
+    .filter((k) => k.length > 0);
+  const sportPriceFiltersRaw = getEnvValue("SPORT_PRICE_FILTERS") ?? "";
+  const sportPriceFilters: Record<string, { min: number; max: number }> = {};
+  for (const entry of sportPriceFiltersRaw.split(",")) {
+    const parts = entry.trim().split(":");
+    if (parts.length === 3) {
+      const sport = parts[0].trim().toLowerCase();
+      const min = Number(parts[1]);
+      const max = Number(parts[2]);
+      if (sport && Number.isFinite(min) && Number.isFinite(max)) {
+        sportPriceFilters[sport] = { min, max };
+      }
+    }
+  }
   const maxChaseSecondsEnv = Number(getEnvValue("MAX_CHASE_SECONDS") ?? 30);
   const maxDailyDrawdownUSDCEnv = Number(getEnvValue("MAX_DAILY_DRAWDOWN_USDC") ?? 30);
 
@@ -222,6 +242,8 @@ export function buildDefaultConfig(): CopybotConfig {
       blacklistConditionIds: [],
       blacklistTokenIds: [],
       blockedTitleKeywords,
+      blockedSlugPrefixes,
+      sportPriceFilters,
       excludeFeeEnabledMarkets: true,
       excludeLowLiquidityMarkets: true
     }
